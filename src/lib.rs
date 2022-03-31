@@ -12,9 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod conn;
 mod error;
-mod server;
 mod frame;
+mod parse;
+mod server;
+mod cmd;
+mod db;
 
 pub use self::error::{Error, Result};
 
@@ -22,17 +26,10 @@ pub use self::error::{Error, Result};
 mod test {
 
     use crate::*;
-    use io_uring::IoUring;
-    use std::net::TcpListener;
 
     #[test]
     fn test_server() -> Result<()> {
-        let ring = IoUring::builder()
-            .dontfork()
-            // .setup_sqpoll(1002)
-            .build(32)?;
-        let listener = TcpListener::bind(&format!("127.0.0.1:9999"))?;
-        server::Server::new(ring).run(listener)?;
+        server::run(([0, 0, 0, 0], 36379))?;
         Ok(())
     }
 }

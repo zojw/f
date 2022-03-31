@@ -6,10 +6,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-io-uring = "0.5"
-tokio = { version = "1.17", features = ["full"] }
+glommio = "0.7"
 thiserror = "1.0"
 libc = { version = "0.2.98", default-features = false }
 rlimit = "0.7"
 bytes = "1"
 atoi = "1"
+num_cpus = "1.13"
+futures-lite = "1.12"

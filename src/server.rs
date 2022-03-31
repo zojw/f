@@ -12,113 +12,82 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::cmd::Command;
+use crate::conn::Conn;
+use crate::db::Db;
 use crate::*;
-use io_uring::{cqueue::Entry, opcode, types, IoUring};
-use rlimit::{getrlimit, Resource};
-use std::{collections::HashMap, mem, net::TcpListener, os::unix::prelude::AsRawFd};
+use glommio::net::TcpListener;
+use glommio::{CpuSet, LocalExecutorBuilder, LocalExecutorPoolBuilder, Placement, PoolPlacement};
+use std::net::SocketAddr;
+use std::rc::Rc;
 
-pub struct Server {
-    pub ring: IoUring,
-
-    fds: Vec<i32>,
-    ctx_id_gen: u64,
-    listen_fd: Option<types::Fixed>,
-    inflight_reqs: HashMap<u64, Req>,
-}
-
-#[derive(Clone)]
-pub struct Req {
-    id: u64,
-    op: Op,
-    fd: types::Fixed,
-}
-
-#[derive(Clone)]
-pub enum Op {
-    Accept,
-    Read,
-}
-
-impl Server {
-    pub fn new(ring: IoUring) -> Self {
-        Self {
-            ring,
-            ctx_id_gen: 1,
-            fds: Vec::new(),
-            inflight_reqs: HashMap::new(),
-            listen_fd: None,
+pub fn run(addr: impl Into<SocketAddr>) -> Result<()> {
+    let addr = addr.into();
+    LocalExecutorPoolBuilder::new(PoolPlacement::MaxSpread(
+        num_cpus::get(),
+        CpuSet::online().ok(),
+    ))
+    .on_all_shards(move || async move {
+        let exec_id = glommio::executor().id();
+        println!("Starting executor {}", exec_id);
+        ShardExecutor {
+            addr: addr.clone(),
+            db: Rc::new(Db::new()),
         }
-    }
+        .listen_and_accept()
+        .await
+        .unwrap();
+    })
+    .unwrap()
+    .join_all();
 
-    pub fn run(&mut self, listener: TcpListener) -> Result<()> {
-        let (_, mut file_limit) = getrlimit(Resource::NOFILE)?;
-        if file_limit > 32768 {
-            file_limit = 32768;
-        }
-        self.ring
-            .submitter()
-            .register_files(&vec![-1; file_limit as usize])?;
-        self.listen_fd = Some(self.register_fd(listener.as_raw_fd())?);
-        self.sumbit_accept_op();
+    // let builder = LocalExecutorBuilder::new(Placement::Fixed(1));
+    // let server_handle = builder.name("server").spawn(move || async move {
+    //     ShardExecutor {
+    //         addr: addr.clone(),
+    //         db: Rc::new(Db::new()),
+    //     }
+    //     .listen_and_accept()
+    //     .await
+    //     .unwrap();
+    // })?;
+    // server_handle.join().unwrap();
+
+    Ok(())
+}
+
+pub struct ShardExecutor {
+    addr: SocketAddr,
+    db: Rc<db::Db>,
+}
+
+impl ShardExecutor {
+    async fn listen_and_accept(&self) -> Result<()> {
+        let listener = TcpListener::bind(&self.addr)?;
         loop {
-            let ready = self.ring.submit_and_wait(1)?;
-            if ready == 0 {
-                continue;
-            }
-            let cqes = self.ring.completion().collect::<Vec<_>>();
-            for cqe in cqes {
-                if cqe.result() < 0 {
-                    return Err(Error::Internal(format!("{}", cqe.result())));
-                }
-                let ctx = self.inflight_reqs.get(&cqe.user_data()).unwrap().to_owned();
-                match ctx.op {
-                    Op::Accept => self.handle_accept(ctx, cqe)?,
-                    Op::Read => self.handle_read(ctx, cqe)?,
-                }
-            }
+            let socket = listener.accept().await?;
+            let addr = socket.peer_addr()?;
+            let db = self.db.clone();
+            println!("Accept conn from: {}", addr);
+            let conn = conn::Conn::new(socket.buffered(), addr);
+            glommio::spawn_local(async move {
+                Self::handle_conn_cmd(db, conn).await.unwrap();
+            })
+            .detach();
         }
         Ok(())
     }
 
-    fn sumbit_accept_op(&mut self) {
-        let mut sockaddr: libc::sockaddr = unsafe { mem::zeroed() };
-        let mut addrlen: libc::socklen_t = mem::size_of::<libc::sockaddr>() as _;
-        let accept_e = opcode::Accept::new(self.listen_fd.unwrap(), &mut sockaddr, &mut addrlen);
-        unsafe {
-            self.ring
-                .submission()
-                .push(&accept_e.build().user_data(self.ctx_id_gen))
-                .expect("queue is full");
+    async fn handle_conn_cmd(db: Rc<Db>, mut conn: Conn) -> Result<()> {
+        loop {
+            let maybe_frame = conn.read_frame().await?;
+            let frame = match maybe_frame {
+                Some(frame) => frame,
+                None => return Ok(()),
+            };
+            let cmd = Command::from_frame(frame)?;
+            cmd.apply(db.clone(), &mut conn).await?;
         }
-        self.inflight_reqs.insert(
-            self.ctx_id_gen,
-            Req {
-                id: self.ctx_id_gen,
-                op: Op::Accept,
-                fd: self.listen_fd.unwrap(),
-            },
-        );
-        self.ctx_id_gen += 1;
-    }
-
-    fn handle_accept(&mut self, req: Req, cqe: Entry) -> Result<()> {
-        assert_eq!(req.id, cqe.user_data());
-        let conn_fd = self.register_fd(cqe.result())?;
-        println!("accept {}", conn_fd.0);
-        self.sumbit_accept_op();
-        Ok(())
-    }
-
-    fn register_fd(&mut self, fd: i32) -> Result<types::Fixed> {
-        self.fds.push(fd);
-        let idx = (self.fds.len() - 1) as u32;
-        self.ring.submitter().register_files_update(idx, &[fd])?;
-        Ok(types::Fixed(idx))
-    }
-
-    fn handle_read(&self, req: Req, cqe: Entry) -> Result<()> {
-        assert_eq!(req.id, cqe.user_data());
-
         Ok(())
     }
 }

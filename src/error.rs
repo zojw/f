@@ -12,7 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::io;
+
+use glommio::GlommioError;
 use thiserror::Error;
+
+use crate::frame;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -30,6 +35,19 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Unknown(Box<dyn std::error::Error + Send + Sync + 'static>),
+}
+
+impl<T> From<GlommioError<T>> for Error {
+    fn from(e: GlommioError<T>) -> Error {
+        let e: io::Error = e.into();
+        Error::Io(e)
+    }
+}
+
+impl From<frame::Error> for Error {
+    fn from(e: frame::Error) -> Self {
+        Error::Unknown(e.into())
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
