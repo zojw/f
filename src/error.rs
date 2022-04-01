@@ -14,7 +14,6 @@
 
 use std::io;
 
-use glommio::GlommioError;
 use thiserror::Error;
 
 use crate::frame;
@@ -35,13 +34,6 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Unknown(Box<dyn std::error::Error + Send + Sync + 'static>),
-}
-
-impl<T> From<GlommioError<T>> for Error {
-    fn from(e: GlommioError<T>) -> Error {
-        let e: io::Error = e.into();
-        Error::Io(e)
-    }
 }
 
 impl From<frame::Error> for Error {

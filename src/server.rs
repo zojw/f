@@ -16,30 +16,29 @@ use crate::cmd::Command;
 use crate::conn::Conn;
 use crate::db::Db;
 use crate::*;
-use glommio::net::TcpListener;
-use glommio::{CpuSet, LocalExecutorBuilder, LocalExecutorPoolBuilder, Placement, PoolPlacement};
+use monoio::net::TcpListener;
 use std::net::SocketAddr;
 use std::rc::Rc;
 
-pub fn run(addr: impl Into<SocketAddr>) -> Result<()> {
+pub async fn run(addr: impl Into<SocketAddr>) -> Result<()> {
     let addr = addr.into();
-    LocalExecutorPoolBuilder::new(PoolPlacement::MaxSpread(
-        num_cpus::get(),
-        CpuSet::online().ok(),
-    ))
-    .on_all_shards(move || async move {
-        let exec_id = glommio::executor().id();
-        println!("Starting executor {}", exec_id);
-        ShardExecutor {
-            addr: addr.clone(),
-            db: Rc::new(Db::new()),
-        }
-        .listen_and_accept()
-        .await
-        .unwrap();
-    })
-    .unwrap()
-    .join_all();
+    // LocalExecutorPoolBuilder::new(PoolPlacement::MaxSpread(
+    //     num_cpus::get(),
+    //     CpuSet::online().ok(),
+    // ))
+    // .on_all_shards(move || async move {
+    //     let exec_id = glommio::executor().id();
+    //     println!("Starting executor {}", exec_id);
+    //     ShardExecutor {
+    //         addr: addr.clone(),
+    //         db: Rc::new(Db::new()),
+    //     }
+    //     .listen_and_accept()
+    //     .await
+    //     .unwrap();
+    // })
+    // .unwrap()
+    // .join_all();
 
     // let builder = LocalExecutorBuilder::new(Placement::Fixed(1));
     // let server_handle = builder.name("server").spawn(move || async move {
@@ -53,6 +52,14 @@ pub fn run(addr: impl Into<SocketAddr>) -> Result<()> {
     // })?;
     // server_handle.join().unwrap();
 
+    ShardExecutor {
+        addr: addr.clone(),
+        db: Rc::new(Db::new()),
+    }
+    .listen_and_accept()
+    .await
+    .unwrap();
+
     Ok(())
 }
 
@@ -65,15 +72,13 @@ impl ShardExecutor {
     async fn listen_and_accept(&self) -> Result<()> {
         let listener = TcpListener::bind(&self.addr)?;
         loop {
-            let socket = listener.accept().await?;
-            let addr = socket.peer_addr()?;
+            let (socket, addr) = listener.accept().await?;
             let db = self.db.clone();
             println!("Accept conn from: {}", addr);
-            let conn = conn::Conn::new(socket.buffered(), addr);
-            glommio::spawn_local(async move {
+            let conn = conn::Conn::new(socket, addr);
+            monoio::spawn(async move {
                 Self::handle_conn_cmd(db, conn).await.unwrap();
-            })
-            .detach();
+            });
         }
         Ok(())
     }

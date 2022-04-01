@@ -6,7 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-glommio = "0.7"
+monoio = { git = "https://github.com/bytedance/monoio.git" }
+monoio-compat = { git = "https://github.com/bytedance/monoio.git" }
 thiserror = "1.0"
 libc = { version = "0.2.98", default-features = false }
 rlimit = "0.7"

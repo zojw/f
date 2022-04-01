@@ -19,11 +19,11 @@ use std::{
 
 use crate::{frame::Frame, Error};
 use bytes::{Buf, BytesMut};
-use futures_lite::{AsyncReadExt, AsyncWriteExt};
-use glommio::net::{Preallocated, TcpStream};
+use monoio::net::TcpStream;
+use monoio_compat::{TcpStreamCompat, AsyncReadExt, AsyncWriteExt};
 
 pub(crate) struct Conn {
-    socket: TcpStream<Preallocated>,
+    socket: TcpStreamCompat,
     addr: SocketAddr,
     buffer: BytesMut,
 }
@@ -31,7 +31,8 @@ pub(crate) struct Conn {
 const BUFF_SIZE: usize = 4 * 1024;
 
 impl Conn {
-    pub fn new(socket: TcpStream<Preallocated>, addr: impl Into<SocketAddr>) -> Self {
+    pub fn new(socket: TcpStream, addr: impl Into<SocketAddr>) -> Self {
+        let socket = unsafe { TcpStreamCompat::new(socket) };
         Self {
             socket,
             addr: addr.into(),

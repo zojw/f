@@ -12,24 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod cmd;
 mod conn;
+mod db;
 mod error;
 mod frame;
 mod parse;
-mod server;
-mod cmd;
-mod db;
+pub mod server;
 
 pub use self::error::{Error, Result};
-
-#[cfg(test)]
-mod test {
-
-    use crate::*;
-
-    #[test]
-    fn test_server() -> Result<()> {
-        server::run(([0, 0, 0, 0], 36379))?;
-        Ok(())
-    }
-}
