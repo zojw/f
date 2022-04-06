@@ -12,30 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![feature(read_buf)]
+use std::io::Cursor;
 
-mod cmd;
-mod conn;
-mod db;
-mod error;
-mod frame;
-mod parse;
-mod server;
+use crate::frame::Frame;
 
-pub use self::error::{Error, Result};
-
-#[cfg(test)]
-mod test {
-
-    use crate::*;
-    use io_uring::IoUring;
-    use std::net::TcpListener;
-
-    #[test]
-    fn test_server() -> Result<()> {
-        let ring = IoUring::builder().dontfork().build(32)?;
-        let listener = TcpListener::bind(&format!("127.0.0.1:9999"))?;
-        server::Server::new(ring).run(listener)?;
-        Ok(())
+pub fn parse_frame(buffer: &[u8]) -> crate::Result<Option<Frame>> {
+    use crate::frame::Error::Incomplete;
+    let mut buf = Cursor::new(&buffer[..]);
+    match Frame::check(&mut buf) {
+        Ok(_) => {
+            let len = buf.position() as usize;
+            buf.set_position(0);
+            let frame = Frame::parse(&mut buf)?;
+            let buf = &buffer[len as usize..];
+            Ok(Some(frame))
+        }
+        Err(Incomplete) => Ok(None),
+        Err(e) => Err(e.into()),
     }
 }
