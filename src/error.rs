@@ -14,6 +14,8 @@
 
 use thiserror::Error;
 
+use crate::frame;
+
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("{0} is not found")]
@@ -30,6 +32,12 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Unknown(Box<dyn std::error::Error + Send + Sync + 'static>),
+}
+
+impl From<frame::Error> for Error {
+    fn from(e: frame::Error) -> Self {
+        Error::Unknown(e.into())
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
